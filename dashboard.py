@@ -139,9 +139,15 @@ st.markdown(f'<div class="tlm-merchant-tag">{selected_merchant}</div>', unsafe_a
 st.subheader(f"Primary run (seed {results.get('primary_seed', '—')})")
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Holdout attacks detected", results["attacks_detected"])
-col2.metric("Median latency", f"{results['median_latency_min']:.2f} min")
+col2.metric("Median latency", results.get("median_latency_display", f"{results['median_latency_min']:.2f} min"))
 col3.metric("Precision", f"{results['precision']:.2f}")
 col4.metric("False-positive rate", f"{results['fp_rate_all_nonattack']:.1%}")
+st.caption(notes.get(
+    "latency_interpretation",
+    f"Detection latency is measured at the simulation/window resolution "
+    f"({results.get('window_seconds', 30)}-second windows) and is not a production "
+    "network-latency benchmark.",
+))
 
 if aggregate:
     st.subheader(f"Aggregate across {aggregate['n_seeds']} independent synthetic scenarios")
@@ -233,7 +239,8 @@ def render_alert_card(alert: dict, featured: bool = False) -> None:
           <div style="margin-top:14px;padding:11px 12px;background:rgba(29,158,117,0.1);
                       border:1px solid rgba(29,158,117,0.3);border-radius:8px;
                       color:#2BD99C;font-size:12.5px;">
-            Suggested action: temporarily hold approvals for the flagged BIN range
+            Suggested action: escalate the flagged activity for additional review. Any payment
+            intervention should remain subject to merchant risk policy and human approval.
           </div>
         </div>
         """,
@@ -264,7 +271,7 @@ with live_col:
             <div class="tlm-stat-chip-row">
               <div class="tlm-stat-chip"><div class="lbl">Precision</div><div class="val">{results['precision']*100:.1f}%</div></div>
               <div class="tlm-stat-chip"><div class="lbl">Recall</div><div class="val">{results['recall']*100:.1f}%</div></div>
-              <div class="tlm-stat-chip"><div class="lbl">Detected in</div><div class="val">{results['median_latency_min']:.1f} min</div></div>
+              <div class="tlm-stat-chip"><div class="lbl">Detected in</div><div class="val">{results.get('median_latency_display', f"{results['median_latency_min']:.1f} min")}</div></div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -275,6 +282,40 @@ with live_col:
                     render_alert_card(alert)
     else:
         st.info("No card-testing alerts fired for this merchant.")
+
+fp_impact = results.get("false_positive_impact")
+if fp_impact:
+    st.subheader("False-positive impact")
+    fcol1, fcol2, fcol3 = st.columns(3)
+    fcol1.metric(
+        "FP windows per 1,000 non-attack windows",
+        f"{fp_impact['false_positive_windows_per_1000']:.2f}",
+    )
+    fcol1.caption(f"{fp_impact['false_positive_windows']} of {fp_impact['total_nonattack_windows']} held-out non-attack windows")
+    fcol2.metric(
+        "Legit txns affected per 1,000 non-attack txns",
+        f"{fp_impact['estimated_legitimate_transactions_affected_per_1000']:.2f}",
+    )
+    fcol2.caption(
+        f"{fp_impact['legitimate_transactions_in_false_positive_windows']} of "
+        f"{fp_impact['total_legitimate_transactions_in_heldout_nonattack_windows']} legitimate held-out transactions"
+    )
+    fcol3.metric(
+        "Legit transaction value temporarily affected",
+        f"₹{fp_impact['estimated_legitimate_transaction_value_temporarily_affected']:,.0f}",
+    )
+    st.caption(
+        "At the measured false-positive rate, some legitimate non-attack activity would be "
+        "unnecessarily flagged for additional review."
+    )
+    st.caption(
+        "These false positives represent customer friction and potentially delayed transaction "
+        "value, not confirmed lost revenue."
+    )
+    st.caption(
+        "Synthetic evaluation. Impact estimates are derived from held-out synthetic predictions "
+        "and synthetic transaction amounts; they are not estimates of real merchant losses."
+    )
 
 counts = results["test_window_counts"]
 st.caption(

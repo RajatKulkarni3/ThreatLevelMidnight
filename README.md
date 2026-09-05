@@ -74,7 +74,7 @@ card-testing attacks and 20 injected demand spikes total, 648 held-out test wind
 | False-positive rate (demand-spike windows) | 6.7% |
 | False-positive rate (all non-attack windows) | 1.5% |
 | Attack-level detection | 12/12 test-split attacks caught |
-| Median detection latency | 0.0 min (alerts on the window the attack starts) |
+| Median detection latency | 0 sec (measured at 30-second window resolution — detected within the same window the attack started; not a production network-latency benchmark) |
 
 **Aggregate across 10 independently generated synthetic scenarios** (fresh data each
 time, same pipeline, seeds 42/101/202/303/404/505/606/707/808/909):
@@ -90,6 +90,31 @@ We report the spread deliberately: a single run's numbers are not presented as *
 result. Recall is the metric that moves the most (down to 0.76 on one seed) — that's
 the honest signal that the underlying synthetic attacks and demand spikes now overlap
 in behavior rather than being trivially separable.
+
+## False-positive impact
+
+A false positive does not necessarily mean revenue is permanently lost. ThreatLevelMidnight
+is a defense-only detection system: an alert represents additional review or temporary
+friction rather than an automatic permanent rejection.
+
+Therefore, false-positive impact is reported operationally using metrics derived directly
+from the held-out evaluation (primary run, seed 42):
+
+| Metric | Value |
+|---|---|
+| False-positive windows per 1,000 non-attack windows | 15.15 (8 / 528) |
+| Estimated legitimate transactions affected per 1,000 non-attack transactions | 51.32 (245 / 4,774) |
+| Estimated legitimate transaction value temporarily affected | ₹10,213.06 |
+
+The transaction-value figure is not reported as revenue lost. It represents transaction
+value associated with legitimate activity that may experience unnecessary review or delay.
+It is computed by summing the actual synthetic transaction amounts belonging to held-out
+windows that were not card-testing attacks but were alerted on anyway — no averaging or
+hardcoded per-transaction cost is used, and a scenario with zero false positives reports
+zero for every field in this section rather than a placeholder value.
+
+> Synthetic evaluation. Impact estimates are derived from measured held-out predictions and
+> the synthetic transaction distribution; they are not estimates of real merchant losses.
 
 ## Known limitations
 
@@ -118,7 +143,8 @@ in behavior rather than being trivially separable.
 ## Defense-only statement
 
 This system is strictly detection and recommendation. It emits alerts with a
-suggested bounded action (e.g. "temporarily hold approvals for the flagged BIN
-range") for a human or a separate authorization system to act on. It does not
+suggested bounded action (e.g. "escalate the flagged activity for additional review;
+any payment intervention should remain subject to merchant risk policy and human
+approval") for a human or a separate authorization system to act on. It does not
 autonomously block, cancel, or reverse any transaction, and it has no
 offense-capable functionality of any kind.

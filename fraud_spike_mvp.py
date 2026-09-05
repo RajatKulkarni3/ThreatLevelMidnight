@@ -388,6 +388,120 @@ def build_features(transactions: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(feature_frames, ignore_index=True).sort_values(["window_start", "merchant_id"]).reset_index(drop=True)
 
 
+def compute_legitimate_window_stats(transactions: pd.DataFrame, window_seconds: int) -> pd.DataFrame:
+    """Bucket every non-card-testing ("legitimate") transaction into the same
+    fixed-width, per-merchant window that build_features uses, and aggregate
+    the actual transaction count/amount per (merchant_id, window_start).
+
+    30 seconds divides evenly into a day, so flooring each timestamp to the
+    window width lands on the same bin edges as build_features' per-merchant
+    resample(f"{WINDOW_SECONDS}s") (pandas' default resample origin is
+    start-of-day, which is itself a multiple of the window width). This lets
+    us join real synthetic transaction data onto the evaluation's window-level
+    predictions without re-deriving or estimating anything.
+    """
+    legit = transactions[transactions["scenario_label"] != "card_testing"].copy()
+    if legit.empty:
+        return pd.DataFrame(columns=["merchant_id", "window_start", "legit_txn_count", "legit_txn_amount"])
+    legit["window_start"] = legit["timestamp"].dt.floor(f"{window_seconds}s")
+    return (
+        legit.groupby(["merchant_id", "window_start"])
+        .agg(legit_txn_count=("amount", "size"), legit_txn_amount=("amount", "sum"))
+        .reset_index()
+    )
+
+
+def compute_false_positive_impact(
+    test: pd.DataFrame, transactions: pd.DataFrame, truth: pd.Series, predicted: np.ndarray, window_seconds: int
+) -> dict:
+    """Honest, dynamically computed false-positive *impact* metrics for the
+    held-out test split — window-level false-positive counts plus the actual
+    legitimate transactions/value inside those falsely flagged windows.
+
+    A false positive here means a held-out window that was NOT a card-testing
+    attack (i.e. a legitimate demand-spike window or a quiet-period window)
+    but was alerted on anyway. This does not claim the underlying transaction
+    value was lost — only that it sat inside a window that would have been
+    flagged for review. All values are derived from the actual held-out
+    predictions and the actual simulated transactions; nothing is estimated
+    from an average or a hardcoded constant, and every ratio is guarded
+    against division by zero.
+    """
+    non_attack = ~truth
+    fp_mask = predicted & non_attack
+
+    false_positive_windows = int(fp_mask.sum())
+    total_nonattack_windows = int(non_attack.sum())
+    false_positive_windows_per_1000 = (
+        false_positive_windows / total_nonattack_windows * 1000 if total_nonattack_windows > 0 else 0.0
+    )
+
+    legit_window_stats = compute_legitimate_window_stats(transactions, window_seconds)
+    test_with_legit = test.merge(legit_window_stats, on=["merchant_id", "window_start"], how="left")
+    test_with_legit[["legit_txn_count", "legit_txn_amount"]] = (
+        test_with_legit[["legit_txn_count", "legit_txn_amount"]].fillna(0.0)
+    )
+    # merge preserves row order/index alignment with `test`, so the same
+    # boolean masks (fp_mask, non_attack) computed against `test` apply here.
+    fp_mask_arr = fp_mask.to_numpy() if hasattr(fp_mask, "to_numpy") else np.asarray(fp_mask)
+    non_attack_arr = non_attack.to_numpy() if hasattr(non_attack, "to_numpy") else np.asarray(non_attack)
+
+    legitimate_transactions_in_false_positive_windows = int(
+        test_with_legit.loc[fp_mask_arr, "legit_txn_count"].sum()
+    )
+    total_legitimate_transactions_in_heldout_nonattack_windows = int(
+        test_with_legit.loc[non_attack_arr, "legit_txn_count"].sum()
+    )
+    estimated_legitimate_transactions_affected_per_1000 = (
+        legitimate_transactions_in_false_positive_windows
+        / total_legitimate_transactions_in_heldout_nonattack_windows
+        * 1000
+        if total_legitimate_transactions_in_heldout_nonattack_windows > 0
+        else 0.0
+    )
+    estimated_legitimate_transaction_value_temporarily_affected = float(
+        test_with_legit.loc[fp_mask_arr, "legit_txn_amount"].sum()
+    )
+
+    return {
+        "false_positive_windows": false_positive_windows,
+        "total_nonattack_windows": total_nonattack_windows,
+        "false_positive_windows_per_1000": false_positive_windows_per_1000,
+        "legitimate_transactions_in_false_positive_windows": legitimate_transactions_in_false_positive_windows,
+        "total_legitimate_transactions_in_heldout_nonattack_windows": (
+            total_legitimate_transactions_in_heldout_nonattack_windows
+        ),
+        "estimated_legitimate_transactions_affected_per_1000": estimated_legitimate_transactions_affected_per_1000,
+        "estimated_legitimate_transaction_value_temporarily_affected": (
+            estimated_legitimate_transaction_value_temporarily_affected
+        ),
+        "currency": "INR",
+        "interpretation": (
+            "False positives represent customer friction and potentially delayed transaction "
+            "value, not confirmed lost revenue."
+        ),
+    }
+
+
+def format_latency_display(latency_minutes: float | None, window_seconds: int) -> str:
+    """Render a measured latency (in minutes, unchanged from the existing
+    calculation) as an honest, appropriately-scaled string instead of a
+    fixed-precision minute value. Detection is only ever observed at
+    WINDOW_SECONDS resolution, so a sub-minute latency is shown in seconds,
+    and an exact-zero latency (attack caught in its first observable window)
+    is reported as such rather than implied to be some small nonzero delay.
+    """
+    if latency_minutes is None:
+        return "no alert"
+    seconds = latency_minutes * 60
+    if seconds <= 0:
+        return "0 sec"
+    if seconds < 60:
+        rounded_seconds = round(seconds)
+        return f"{rounded_seconds} sec" if rounded_seconds > 0 else "<1 sec"
+    return f"{latency_minutes:.2f} min"
+
+
 def run_pipeline(seed: int, verbose: bool) -> dict:
     """Simulate one scenario end-to-end and evaluate it. Returns everything
     needed both for the aggregate metrics table and (for the primary seed)
@@ -460,6 +574,7 @@ def run_pipeline(seed: int, verbose: bool) -> dict:
     fp_rate = float(predicted[demand].mean()) if demand.any() else float("nan")
     non_attack = ~truth
     fp_all_rate = float(predicted[non_attack].mean()) if non_attack.any() else float("nan")
+    false_positive_impact = compute_false_positive_impact(test, transactions, truth, predicted, WINDOW_SECONDS)
 
     if verbose:
         print("\n=== Full test-set evaluation ===")
@@ -468,6 +583,17 @@ def run_pipeline(seed: int, verbose: bool) -> dict:
         print(f"Card-testing F1:        {f1:.3f}")
         print(f"False-positive rate on demand_spike windows: {fp_rate:.3f}")
         print(f"False-positive rate on all non-attack windows: {fp_all_rate:.3f}")
+        print("\n=== False-positive impact (held-out) ===")
+        print(f"False-positive windows: {false_positive_impact['false_positive_windows']}/"
+              f"{false_positive_impact['total_nonattack_windows']} non-attack windows "
+              f"({false_positive_impact['false_positive_windows_per_1000']:.2f} per 1,000)")
+        print(f"Legitimate transactions in false-positive windows: "
+              f"{false_positive_impact['legitimate_transactions_in_false_positive_windows']}/"
+              f"{false_positive_impact['total_legitimate_transactions_in_heldout_nonattack_windows']} "
+              f"({false_positive_impact['estimated_legitimate_transactions_affected_per_1000']:.2f} per 1,000)")
+        print("Estimated legitimate transaction value temporarily affected: "
+              f"₹{false_positive_impact['estimated_legitimate_transaction_value_temporarily_affected']:,.2f} "
+              "(not confirmed revenue lost)")
         print(f"Test-set cardinality: {int(truth.sum())} card-testing windows; {int(demand.sum())} demand-spike windows; "
               f"{int((~truth & ~demand).sum())} quiet-period windows")
 
@@ -486,7 +612,7 @@ def run_pipeline(seed: int, verbose: bool) -> dict:
     if verbose:
         print("\nDetection latency for injected card-testing attacks:")
         for item in attack_level_results:
-            scope = f"{item['latency_min']:.2f} minutes" if item["detected"] else "no alert"
+            scope = format_latency_display(item["latency_min"], WINDOW_SECONDS) if item["detected"] else "no alert"
             print(f"  {item['merchant_id']} {item['attack_start']} [{item['variant']}]: {scope}")
 
     test_attacks = [item for item in attack_level_results if item["attack_start"] >= test["window_start"].min()]
@@ -496,8 +622,8 @@ def run_pipeline(seed: int, verbose: bool) -> dict:
     if verbose:
         print(f"Attack-level detection (test alerts): {sum(1 for i in attack_level_results if i['detected'])}/{len(attack_level_results)} attacks detected")
         print(f"Holdout attack coverage: {test_detected}/{len(test_attacks)} test-set attacks detected (small sample)")
-        print(f"Median detection latency: {median_latency:.2f} minutes" if median_latency is not None
-              else "Median detection latency: no detected attacks")
+        print(f"Median detection latency: {format_latency_display(median_latency, WINDOW_SECONDS)}"
+              if median_latency is not None else "Median detection latency: no detected attacks")
 
     return {
         "seed": seed,
@@ -513,6 +639,8 @@ def run_pipeline(seed: int, verbose: bool) -> dict:
         },
         "attacks_detected": f"{test_detected}/{len(test_attacks)}",
         "median_latency_min": median_latency,
+        "median_latency_display": format_latency_display(median_latency, WINDOW_SECONDS),
+        "false_positive_impact": false_positive_impact,
         "features": features,
         "injections": injections,
         "alerts": alerts,
@@ -580,9 +708,12 @@ def main() -> None:
         "f1": primary["f1"],
         "attacks_detected": primary["attacks_detected"],
         "median_latency_min": primary["median_latency_min"],
+        "median_latency_display": primary["median_latency_display"],
+        "window_seconds": WINDOW_SECONDS,
         "fp_rate_demand_spike": primary["fp_rate_demand_spike"],
         "fp_rate_all_nonattack": primary["fp_rate_all_nonattack"],
         "test_window_counts": primary["test_window_counts"],
+        "false_positive_impact": primary["false_positive_impact"],
         "aggregate_evaluation": aggregate,
         "methodology_notes": {
             "score_interpretation": (
@@ -600,6 +731,11 @@ def main() -> None:
                 "0.60 alert threshold is fixed a priori and not tuned on test data; Stage 1's rolling "
                 "baseline only looks backward in time. No train/test contamination was found in the "
                 "current pipeline."
+            ),
+            "latency_interpretation": (
+                f"Detection latency is measured at the simulation/window resolution ({WINDOW_SECONDS}-second "
+                "windows) and is not a production network-latency benchmark. A latency of 0 sec means the "
+                "attack was detected within the same window it started, not that detection was instantaneous."
             ),
         },
         "alerts": [
