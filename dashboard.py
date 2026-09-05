@@ -39,16 +39,34 @@ if not results_path.exists():
 with results_path.open(encoding="utf-8") as result_file:
     results = json.load(result_file)
 
+aggregate = results.get("aggregate_evaluation")
+notes = results.get("methodology_notes", {})
+
 velocity = pd.DataFrame(results["velocity_series"])
 velocity["window_start"] = pd.to_datetime(velocity["window_start"])
 merchants = sorted(velocity["merchant_id"].unique())
 selected_merchant = st.selectbox("Merchant", merchants)
 
+st.subheader(f"Primary run (seed {results.get('primary_seed', '—')})")
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Holdout attacks detected", results["attacks_detected"])
 col2.metric("Median latency", f"{results['median_latency_min']:.2f} min")
 col3.metric("Precision", f"{results['precision']:.2f}")
 col4.metric("False-positive rate", f"{results['fp_rate_all_nonattack']:.1%}")
+
+if aggregate:
+    st.subheader(f"Aggregate across {aggregate['n_seeds']} independent synthetic scenarios")
+    st.caption("Same pipeline, freshly generated synthetic data each time — shows how much the metrics move, not just one run.")
+    acol1, acol2, acol3, acol4 = st.columns(4)
+    acol1.metric("Precision (mean ± std)", f"{aggregate['precision']['mean']:.2f} ± {aggregate['precision']['std']:.2f}")
+    acol2.metric("Recall (mean ± std)", f"{aggregate['recall']['mean']:.2f} ± {aggregate['recall']['std']:.2f}")
+    acol3.metric("F1 (mean ± std)", f"{aggregate['f1']['mean']:.2f} ± {aggregate['f1']['std']:.2f}")
+    acol4.metric(
+        "FP rate, all non-attack (mean ± std)",
+        f"{aggregate['fp_rate_all_nonattack']['mean']:.1%} ± {aggregate['fp_rate_all_nonattack']['std']:.1%}",
+    )
+    with st.expander("Per-seed breakdown"):
+        st.dataframe(pd.DataFrame(aggregate["per_seed"]), use_container_width=True, hide_index=True)
 
 merchant_velocity = velocity[velocity["merchant_id"] == selected_merchant]
 merchant_alerts = [alert for alert in results["alerts"] if alert["merchant_id"] == selected_merchant]
@@ -78,14 +96,41 @@ if merchant_alerts:
         hovertemplate="%{x}<br>Card-testing alert<extra></extra>",
     ))
 figure.update_layout(
-    template="plotly_dark", height=440, margin={"l": 12, "r": 12, "t": 45, "b": 12},
+    template="plotly_dark", height=440, margin={"l": 12, "r": 12, "t": 60, "b": 12},
     title=f"{selected_merchant}: transaction velocity", paper_bgcolor="#0B1120", plot_bgcolor="#141B2D",
-    xaxis_title="Window start", yaxis_title="Transactions / second", legend={"orientation": "h", "y": 1.12},
+    xaxis_title="Window start", yaxis_title="Transactions / second", legend={"orientation": "h", "y": 1.16},
 )
 st.plotly_chart(figure, use_container_width=True)
 
+
+def describe_pattern(feature_values: dict) -> str:
+    """Build an honest, alert-specific description from the actual feature
+    values instead of a single hardcoded pattern description — different
+    attack variants (narrow vs. distributed, etc.) look quite different."""
+    notes_found = []
+    decline = feature_values.get("decline_rate", 0)
+    if decline > 0.5:
+        notes_found.append("high decline rate")
+    elif decline > 0.25:
+        notes_found.append("elevated decline rate")
+    if feature_values.get("device_diversity_ratio", 1) < 0.3:
+        notes_found.append("low device diversity")
+    if feature_values.get("ip_diversity_ratio", 1) < 0.3:
+        notes_found.append("low IP diversity")
+    if feature_values.get("bin_diversity_ratio", 1) < 0.3:
+        notes_found.append("narrow BIN range")
+    if feature_values.get("pct_low_amount", 0) > 0.6:
+        notes_found.append("mostly low-value transactions")
+    return ", ".join(notes_found) if notes_found else "moderate anomaly signature across several features"
+
+
 st.subheader("Highest-confidence alerts")
-for alert in sorted(merchant_alerts, key=lambda item: item["confidence"], reverse=True)[:5]:
+st.caption(notes.get(
+    "score_interpretation",
+    "Model score is the classifier's own probability estimate, not a calibrated real-world fraud likelihood.",
+))
+for alert in sorted(merchant_alerts, key=lambda item: item["model_score"], reverse=True)[:5]:
+    pattern = describe_pattern(alert.get("features", {}))
     st.markdown(
         f"""
         <div style="background:#141B2D;border:1px solid #1F2937;border-left:4px solid #1D9E75;
@@ -94,10 +139,10 @@ for alert in sorted(merchant_alerts, key=lambda item: item["confidence"], revers
             Fraud spike detected — {alert['merchant_id']}
           </div>
           <div style="color:#9CA3AF;font-size:13px;margin-top:4px;">
-            Confidence: {alert['confidence'] * 100:.1f}% · Window: {alert['window_start']}
+            Model score: {alert['model_score'] * 100:.1f}% (uncalibrated) · Window: {alert['window_start']}
           </div>
           <div style="color:#D1D5DB;font-size:13px;margin-top:8px;">
-            Pattern: card testing — narrow BIN range, high decline rate
+            Pattern: card testing — {pattern}
           </div>
           <div style="color:#1D9E75;font-size:13px;margin-top:6px;font-weight:500;">
             Suggested action: temporarily hold approvals for the flagged BIN range
@@ -109,7 +154,7 @@ for alert in sorted(merchant_alerts, key=lambda item: item["confidence"], revers
 
 counts = results["test_window_counts"]
 st.caption(
-    f"Evaluation: {results['attacks_detected']} holdout attacks detected; {counts['card_testing']} card-testing windows, "
+    f"Primary-run evaluation: {results['attacks_detected']} holdout attacks detected; {counts['card_testing']} card-testing windows, "
     f"{counts['demand_spike']} demand-spike windows, and {counts['quiet_period']} quiet-period windows. "
-    "Synthetic evaluation demonstrates the detection mechanism, not a production-scale false-positive rate."
+    + notes.get("evaluation_scope", "Synthetic evaluation demonstrates the detection mechanism, not a production-scale false-positive rate.")
 )
