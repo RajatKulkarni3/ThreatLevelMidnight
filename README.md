@@ -1,3 +1,4 @@
+ HEAD
 # Fraud Spike Detector MVP
 
 Synthetic, defense-only detection for card-testing fraud spikes. The prototype uses a two-stage pipeline: a frozen-baseline velocity detector identifies unusual traffic, then logistic regression separates card testing from legitimate demand spikes using decline rate, identity diversity, and amount features.
@@ -34,3 +35,4 @@ Card-testing detection: 12/12 holdout-test attacks detected with 0.00-minute med
 ## Safety
 
 Defense-only: this system detects and alerts only—it takes no offensive or evasive action and includes no code that could be repurposed for fraud.
+
