@@ -620,8 +620,10 @@ def run_pipeline(seed: int, verbose: bool) -> dict:
     detected_latencies = [item["latency_min"] for item in attack_level_results if item["detected"]]
     median_latency = float(median(detected_latencies)) if detected_latencies else None
     if verbose:
-        print(f"Attack-level detection (test alerts): {sum(1 for i in attack_level_results if i['detected'])}/{len(attack_level_results)} attacks detected")
-        print(f"Holdout attack coverage: {test_detected}/{len(test_attacks)} test-set attacks detected (small sample)")
+        print(f"Attack-level detection (all injected attacks, train+test — train attacks are never "
+              f"scored since alerts are only generated on the test split): "
+              f"{sum(1 for i in attack_level_results if i['detected'])}/{len(attack_level_results)} attacks detected")
+        print(f"Holdout attack coverage (test split only — the reported metric): {test_detected}/{len(test_attacks)} test-set attacks detected (small sample)")
         print(f"Median detection latency: {format_latency_display(median_latency, WINDOW_SECONDS)}"
               if median_latency is not None else "Median detection latency: no detected attacks")
 

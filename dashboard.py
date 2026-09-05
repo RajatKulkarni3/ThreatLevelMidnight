@@ -111,7 +111,7 @@ st.markdown(
           <div class="tlm-dot"></div>
           <div class="tlm-wordmark">Threat<span>Level</span>Midnight</div>
         </div>
-        <div class="tlm-sub">Real-time card-testing detection, distinguished from legitimate demand spikes</div>
+        <div class="tlm-sub">Card-testing detection on held-out synthetic transaction windows, distinguished from legitimate demand spikes</div>
       </div>
       <div class="tlm-badge">Track 2 · AI Risk Manager · Razorpay AI Buildathon</div>
     </div>
@@ -257,7 +257,7 @@ with chart_col:
 
 with live_col:
     st.markdown(
-        '<div class="tlm-live-label"><span class="tlm-pulse-dot"></span>Live alert feed</div>',
+        '<div class="tlm-live-label"><span class="tlm-pulse-dot"></span>Held-out alert feed</div>',
         unsafe_allow_html=True,
     )
     st.caption(notes.get(

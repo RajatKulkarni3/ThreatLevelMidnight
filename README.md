@@ -1,4 +1,4 @@
-# ThreatLevelMidnight — Real-Time Card-Testing Spike Detector
+# ThreatLevelMidnight — Card-Testing Spike Detector (Held-Out Synthetic Evaluation)
 
 **Track 2: AI Risk Manager — Razorpay AI Buildathon**
 
@@ -131,6 +131,18 @@ zero for every field in this section rather than a placeholder value.
 - **Recall varies meaningfully across scenarios** (0.76-1.00) — this is not a
   reliably "solved" detector; it is a working prototype whose failure modes are
   measured and disclosed rather than hidden.
+- **Stage 1's job is easier than it looks.** Injected spikes run at roughly 10x the
+  baseline transaction rate, so Stage 1's 3-std velocity gate catches essentially
+  all of them by construction — the real discrimination work (attack vs. legitimate
+  spike) happens entirely in Stage 2. Stage 1 should be read as a cheap pre-filter
+  that limits how much traffic reaches the classifier, not as a change-point
+  detector solving a hard anomaly-detection problem on its own.
+- **No baseline comparison yet.** We have not benchmarked Stage 2 against a simple
+  hand-written rule (e.g. `decline_rate > 0.5 AND bin_diversity_ratio < 0.3`) on the
+  same held-out windows, so we can't yet quantify how much the classifier adds over
+  a rule-based approach. Given the model is deliberately kept interpretable
+  (logistic regression, six behavioral features, not a black box), a rule-based
+  system is a plausible alternative worth comparing against in a future iteration.
 - **Model score is uncalibrated.** The classifier's probability output is a relative
   ranking signal for thresholding alerts, not a calibrated real-world likelihood of
   fraud.
