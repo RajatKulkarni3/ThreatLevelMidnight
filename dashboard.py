@@ -8,28 +8,116 @@ import plotly.graph_objects as go
 import streamlit as st
 
 
-st.set_page_config(page_title="Fraud Spike Detector", layout="wide")
+st.set_page_config(page_title="ThreatLevelMidnight — Fraud Spike Detector", layout="wide")
 st.markdown(
     """
     <style>
-      .stApp { background: #0B1120; color: #FFFFFF; }
+      html, body, .stApp,
+      [data-testid="stAppViewContainer"],
+      [data-testid="stMain"],
+      [data-testid="stHeader"],
+      .main {
+        background-color: #0B1120 !important;
+        color: #FFFFFF !important;
+      }
+      #MainMenu, footer, header { visibility: hidden; }
+
       [data-testid="stMetric"] {
         background: #141B2D;
         border: 1px solid #1F2937;
+        border-top: 3px solid #1D9E75;
         border-radius: 12px;
         padding: 16px;
       }
-      [data-testid="stMetricLabel"], [data-testid="stCaptionContainer"] { color: #9CA3AF; }
-      [data-testid="stMetricValue"] { color: #FFFFFF; }
+      [data-testid="stMetricLabel"] { color: #9CA3AF !important; text-transform: uppercase; letter-spacing: 0.4px; font-size: 11px; }
+      [data-testid="stCaptionContainer"] { color: #9CA3AF !important; }
+      [data-testid="stMetricValue"] { color: #2BD99C !important; font-weight: 700; }
       h1, h2, h3 { color: #FFFFFF; }
       .teal-accent { color: #1D9E75; }
+
+      /* Top header bar, matching the buildathon concept video */
+      .tlm-header {
+        display: flex; align-items: center; justify-content: space-between;
+        border-bottom: 1px solid #1F2937; padding-bottom: 14px; margin-bottom: 22px;
+      }
+      .tlm-logo { display: flex; align-items: center; gap: 10px; }
+      .tlm-dot { width: 10px; height: 10px; border-radius: 3px; background: #2BD99C; flex-shrink: 0; }
+      .tlm-wordmark { font-size: 22px; font-weight: 800; color: #FFFFFF !important; letter-spacing: 0.2px; }
+      .tlm-wordmark span { color: #2BD99C !important; }
+      .tlm-sub { font-size: 12.5px; color: #9CA3AF !important; margin-top: 2px; }
+      .tlm-badge {
+        font-size: 11px; color: #9CA3AF !important; border: 1px solid #1F2937;
+        padding: 6px 12px; border-radius: 20px; white-space: nowrap;
+      }
+
+      /* Merchant tag pill next to the selector */
+      .tlm-merchant-tag {
+        display: inline-block; font-size: 11px; color: #2BD99C !important;
+        background: rgba(29,158,117,0.12); border: 1px solid rgba(29,158,117,0.35);
+        padding: 4px 11px; border-radius: 20px; margin-top: 6px;
+      }
+
+      /* Pattern tag pills inside alert cards */
+      .tlm-tagrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+      .tlm-tag {
+        font-size: 11px; background: rgba(239,68,68,0.12); color: #FCA5A5 !important;
+        border: 1px solid rgba(239,68,68,0.3); padding: 4px 10px; border-radius: 20px;
+      }
+      .tlm-pattern-label {
+        font-size: 10.5px; color: #6B7280 !important; text-transform: uppercase;
+        letter-spacing: 0.5px; margin-top: 14px;
+      }
+
+      /* Live feed panel: the featured alert + pulsing indicator + slide-in motion */
+      .tlm-live-label {
+        display: flex; align-items: center; gap: 7px; font-size: 11px;
+        color: #F87171 !important; text-transform: uppercase; letter-spacing: 0.6px;
+        font-weight: 700; margin-bottom: 10px;
+      }
+      .tlm-pulse-dot {
+        width: 8px; height: 8px; border-radius: 50%; background: #EF4444;
+        box-shadow: 0 0 0 0 rgba(239,68,68,0.6);
+        animation: tlm-pulse 1.6s infinite;
+      }
+      @keyframes tlm-pulse {
+        0%   { box-shadow: 0 0 0 0 rgba(239,68,68,0.55); }
+        70%  { box-shadow: 0 0 0 9px rgba(239,68,68,0); }
+        100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+      }
+      .tlm-alert-featured {
+        animation: tlm-slidein 0.45s ease-out;
+      }
+      @keyframes tlm-slidein {
+        from { opacity: 0; transform: translateX(24px); }
+        to   { opacity: 1; transform: translateX(0); }
+      }
+      .tlm-stat-chip-row { display: flex; gap: 8px; margin-top: 12px; }
+      .tlm-stat-chip {
+        flex: 1; background: #141B2D; border: 1px solid #1F2937; border-radius: 10px;
+        padding: 10px 8px; text-align: center;
+      }
+      .tlm-stat-chip .lbl { font-size: 9px; color: #9CA3AF !important; text-transform: uppercase; letter-spacing: 0.4px; }
+      .tlm-stat-chip .val { font-size: 18px; font-weight: 700; color: #2BD99C !important; margin-top: 3px; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.title("Fraud spike detector")
-st.caption("Real-time card-testing detection, distinguished from legitimate demand spikes")
+st.markdown(
+    """
+    <div class="tlm-header">
+      <div>
+        <div class="tlm-logo">
+          <div class="tlm-dot"></div>
+          <div class="tlm-wordmark">Threat<span>Level</span>Midnight</div>
+        </div>
+        <div class="tlm-sub">Real-time card-testing detection, distinguished from legitimate demand spikes</div>
+      </div>
+      <div class="tlm-badge">Track 2 · AI Risk Manager · Razorpay AI Buildathon</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 results_path = Path("results.json")
 if not results_path.exists():
@@ -46,6 +134,7 @@ velocity = pd.DataFrame(results["velocity_series"])
 velocity["window_start"] = pd.to_datetime(velocity["window_start"])
 merchants = sorted(velocity["merchant_id"].unique())
 selected_merchant = st.selectbox("Merchant", merchants)
+st.markdown(f'<div class="tlm-merchant-tag">{selected_merchant}</div>', unsafe_allow_html=True)
 
 st.subheader(f"Primary run (seed {results.get('primary_seed', '—')})")
 col1, col2, col3, col4 = st.columns(4)
@@ -96,63 +185,96 @@ if merchant_alerts:
         hovertemplate="%{x}<br>Card-testing alert<extra></extra>",
     ))
 figure.update_layout(
-    template="plotly_dark", height=480, margin={"l": 12, "r": 12, "t": 50, "b": 90},
+    template="plotly_dark", height=460, margin={"l": 12, "r": 12, "t": 50, "b": 90},
     title={"text": f"{selected_merchant}: transaction velocity", "y": 0.97},
     paper_bgcolor="#0B1120", plot_bgcolor="#141B2D",
     xaxis_title="Window start", yaxis_title="Transactions / second",
     legend={"orientation": "h", "y": -0.22, "yanchor": "top", "x": 0.5, "xanchor": "center"},
 )
-st.plotly_chart(figure, use_container_width=True)
 
 
-def describe_pattern(feature_values: dict) -> str:
-    """Build an honest, alert-specific description from the actual feature
+def describe_pattern(feature_values: dict) -> list[str]:
+    """Build an honest, alert-specific set of tags from the actual feature
     values instead of a single hardcoded pattern description — different
     attack variants (narrow vs. distributed, etc.) look quite different."""
-    notes_found = []
+    tags = []
     decline = feature_values.get("decline_rate", 0)
     if decline > 0.5:
-        notes_found.append("high decline rate")
+        tags.append(f"{decline:.0%} decline rate")
     elif decline > 0.25:
-        notes_found.append("elevated decline rate")
+        tags.append(f"elevated decline rate ({decline:.0%})")
     if feature_values.get("device_diversity_ratio", 1) < 0.3:
-        notes_found.append("low device diversity")
+        tags.append("low device diversity")
     if feature_values.get("ip_diversity_ratio", 1) < 0.3:
-        notes_found.append("low IP diversity")
+        tags.append("low IP diversity")
     if feature_values.get("bin_diversity_ratio", 1) < 0.3:
-        notes_found.append("narrow BIN range")
+        tags.append("narrow BIN pool")
     if feature_values.get("pct_low_amount", 0) > 0.6:
-        notes_found.append("mostly low-value transactions")
-    return ", ".join(notes_found) if notes_found else "moderate anomaly signature across several features"
+        tags.append(f"{feature_values['pct_low_amount']:.0%} low-value txns")
+    return tags if tags else ["moderate anomaly signature across several features"]
 
 
-st.subheader("Highest-confidence alerts")
-st.caption(notes.get(
-    "score_interpretation",
-    "Model score is the classifier's own probability estimate, not a calibrated real-world fraud likelihood.",
-))
-for alert in sorted(merchant_alerts, key=lambda item: item["model_score"], reverse=True)[:5]:
-    pattern = describe_pattern(alert.get("features", {}))
+def render_alert_card(alert: dict, featured: bool = False) -> None:
+    tags = describe_pattern(alert.get("features", {}))
+    tag_html = "".join(f'<span class="tlm-tag">{tag}</span>' for tag in tags)
+    wrapper_class = "tlm-alert-featured" if featured else ""
     st.markdown(
         f"""
-        <div style="background:#141B2D;border:1px solid #1F2937;border-left:4px solid #1D9E75;
-                    border-radius:8px;padding:16px;margin-bottom:12px;">
-          <div style="color:#FFFFFF;font-weight:600;font-size:16px;">
+        <div class="{wrapper_class}" style="background:#141B2D;border:1px solid #1F2937;border-left:4px solid #EF4444;
+                    border-radius:10px;padding:18px;margin-bottom:14px;">
+          <div style="color:#FFFFFF;font-weight:700;font-size:16px;">
             Fraud spike detected — {alert['merchant_id']}
           </div>
-          <div style="color:#9CA3AF;font-size:13px;margin-top:4px;">
+          <div style="color:#9CA3AF;font-size:12.5px;margin-top:5px;">
             Model score: {alert['model_score'] * 100:.1f}% (uncalibrated) · Window: {alert['window_start']}
           </div>
-          <div style="color:#D1D5DB;font-size:13px;margin-top:8px;">
-            Pattern: card testing — {pattern}
-          </div>
-          <div style="color:#1D9E75;font-size:13px;margin-top:6px;font-weight:500;">
+          <div class="tlm-pattern-label">Pattern — card testing</div>
+          <div class="tlm-tagrow">{tag_html}</div>
+          <div style="margin-top:14px;padding:11px 12px;background:rgba(29,158,117,0.1);
+                      border:1px solid rgba(29,158,117,0.3);border-radius:8px;
+                      color:#2BD99C;font-size:12.5px;">
             Suggested action: temporarily hold approvals for the flagged BIN range
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+sorted_alerts = sorted(merchant_alerts, key=lambda item: item["model_score"], reverse=True)
+
+chart_col, live_col = st.columns([2, 1])
+
+with chart_col:
+    st.plotly_chart(figure, use_container_width=True)
+
+with live_col:
+    st.markdown(
+        '<div class="tlm-live-label"><span class="tlm-pulse-dot"></span>Live alert feed</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(notes.get(
+        "score_interpretation",
+        "Model score is the classifier's own probability estimate, not a calibrated real-world fraud likelihood.",
+    ))
+    if sorted_alerts:
+        render_alert_card(sorted_alerts[0], featured=True)
+        st.markdown(
+            f"""
+            <div class="tlm-stat-chip-row">
+              <div class="tlm-stat-chip"><div class="lbl">Precision</div><div class="val">{results['precision']*100:.1f}%</div></div>
+              <div class="tlm-stat-chip"><div class="lbl">Recall</div><div class="val">{results['recall']*100:.1f}%</div></div>
+              <div class="tlm-stat-chip"><div class="lbl">Detected in</div><div class="val">{results['median_latency_min']:.1f} min</div></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if len(sorted_alerts) > 1:
+            with st.expander(f"Show {len(sorted_alerts) - 1} more alerts for {selected_merchant}"):
+                for alert in sorted_alerts[1:6]:
+                    render_alert_card(alert)
+    else:
+        st.info("No card-testing alerts fired for this merchant.")
 
 counts = results["test_window_counts"]
 st.caption(
