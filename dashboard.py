@@ -58,11 +58,11 @@ if aggregate:
     st.subheader(f"Aggregate across {aggregate['n_seeds']} independent synthetic scenarios")
     st.caption("Same pipeline, freshly generated synthetic data each time — shows how much the metrics move, not just one run.")
     acol1, acol2, acol3, acol4 = st.columns(4)
-    acol1.metric("Precision (mean ± std)", f"{aggregate['precision']['mean']:.2f} ± {aggregate['precision']['std']:.2f}")
-    acol2.metric("Recall (mean ± std)", f"{aggregate['recall']['mean']:.2f} ± {aggregate['recall']['std']:.2f}")
-    acol3.metric("F1 (mean ± std)", f"{aggregate['f1']['mean']:.2f} ± {aggregate['f1']['std']:.2f}")
+    acol1.metric("Precision (mean±std)", f"{aggregate['precision']['mean']:.2f} ± {aggregate['precision']['std']:.2f}")
+    acol2.metric("Recall (mean±std)", f"{aggregate['recall']['mean']:.2f} ± {aggregate['recall']['std']:.2f}")
+    acol3.metric("F1 (mean±std)", f"{aggregate['f1']['mean']:.2f} ± {aggregate['f1']['std']:.2f}")
     acol4.metric(
-        "FP rate, all non-attack (mean ± std)",
+        "FP rate (mean±std)",
         f"{aggregate['fp_rate_all_nonattack']['mean']:.1%} ± {aggregate['fp_rate_all_nonattack']['std']:.1%}",
     )
     with st.expander("Per-seed breakdown"):
@@ -96,9 +96,11 @@ if merchant_alerts:
         hovertemplate="%{x}<br>Card-testing alert<extra></extra>",
     ))
 figure.update_layout(
-    template="plotly_dark", height=440, margin={"l": 12, "r": 12, "t": 60, "b": 12},
-    title=f"{selected_merchant}: transaction velocity", paper_bgcolor="#0B1120", plot_bgcolor="#141B2D",
-    xaxis_title="Window start", yaxis_title="Transactions / second", legend={"orientation": "h", "y": 1.16},
+    template="plotly_dark", height=480, margin={"l": 12, "r": 12, "t": 50, "b": 90},
+    title={"text": f"{selected_merchant}: transaction velocity", "y": 0.97},
+    paper_bgcolor="#0B1120", plot_bgcolor="#141B2D",
+    xaxis_title="Window start", yaxis_title="Transactions / second",
+    legend={"orientation": "h", "y": -0.22, "yanchor": "top", "x": 0.5, "xanchor": "center"},
 )
 st.plotly_chart(figure, use_container_width=True)
 
