@@ -1,38 +1,124 @@
- HEAD
-# Fraud Spike Detector MVP
+# ThreatLevelMidnight — Real-Time Card-Testing Spike Detector
 
-Synthetic, defense-only detection for card-testing fraud spikes. The prototype uses a two-stage pipeline: a frozen-baseline velocity detector identifies unusual traffic, then logistic regression separates card testing from legitimate demand spikes using decline rate, identity diversity, and amount features.
+**Track 2: AI Risk Manager — Razorpay AI Buildathon**
+
+## The problem
+
+Confirmed-fraud (chargeback) labels take 30-120 days to arrive. A classifier trained
+on confirmed labels is structurally blind to an attack happening *right now* — by the
+time a label exists, the damage is done.
+
+This project detects that a merchant is **currently under a coordinated card-testing
+attack** — from behavioral pattern alone, before any confirmed label exists — and
+distinguishes it from a **legitimate demand spike** (e.g. a flash sale), since both
+look identical at a glance: a sudden burst of transaction volume.
+
+- **Card-testing attack**: stolen card numbers run through checkout in small,
+  low-value charges to find which ones still work. Signature: burst of volume, high
+  decline rate, narrow BIN pool, narrow device/IP pool, low amounts.
+- **Legitimate demand spike**: also a sudden volume burst, but high approval rate,
+  wide device/card/IP diversity, normal-to-higher amounts.
 
 ## Architecture
 
-```text
-Transaction simulator
+```
+Synthetic transaction simulator (labeled: card_testing / demand_spike / normal)
         |
-30-second rolling feature engine
+Rolling 30-second feature windows, per merchant
+  (velocity, decline_rate, bin/device/ip diversity ratios, pct_low_amount, mean_amount)
         |
-Stage 1: frozen-baseline velocity spike detection
+Stage 1 — change-point detector
+  rolling baseline mean/std on velocity; a window is a candidate spike when
+  velocity > baseline_mean + 3 x baseline_std.
+  The baseline FREEZES while a spike is active, so a sustained attack doesn't get
+  absorbed into "normal" and stop triggering.
         |
-Stage 2: logistic-regression spike classification
+Stage 2 — classifier (only runs on candidate-spike windows)
+  StandardScaler -> LogisticRegression, predicting card_testing vs demand_spike
         |
-Explainable alerts + results.json + dashboard
+Alert engine
+  fires when predicted_label == card_testing AND model_score > 0.60
+  (model_score is the classifier's own probability estimate — an uncalibrated
+  ranking signal, not a calibrated real-world fraud probability)
         |
-Evaluation against simulator ground truth
+Evaluation harness
+  window-level precision/recall/F1, false-positive rate against BOTH demand-spike
+  windows and ALL non-attack windows (including quiet periods), plus attack-level
+  detection (did we catch each true injected attack at all, and how fast) —
+  reported across 10 independently generated synthetic scenarios, not one run.
+        |
+Streamlit dashboard (dashboard.py)
+  velocity chart with true attack/demand starts and fired alerts, per-alert feature
+  breakdown, aggregate metrics across scenarios.
 ```
 
-## Run
+## How to run
 
 ```bash
-python fraud_spike_mvp.py
-streamlit run dashboard.py
+pip install -r requirements.txt
+python3 fraud_spike_mvp.py            # generates results.json + spike_detection_demo.png
+python3 -m streamlit run dashboard.py # interactive dashboard
 ```
 
-The first command generates `results.json` and `spike_detection_demo.png`; the dashboard only displays those already-computed artifacts.
+## Evaluation results (real, not hardcoded)
 
-## Evaluation
+**Primary run (seed 42)** — 3 merchants, 6 hours of synthetic traffic, 20 injected
+card-testing attacks and 20 injected demand spikes total, 648 held-out test windows
+(120 card-testing, 120 demand-spike, 408 quiet):
 
-Card-testing detection: 12/12 holdout-test attacks detected with 0.00-minute median detection latency, and 0/528 non-attack evaluation windows (120 demand-spike, 408 quiet-period) triggered a false alert. This is a synthetic evaluation with 20 injected attacks across train/test, demonstrating that the detection mechanism works as designed — not a statistically robust production false-positive estimate. Production validation would require thousands of real merchant-days.
+| Metric | Value |
+|---|---|
+| Precision | 0.937 |
+| Recall | 0.992 |
+| F1 | 0.964 |
+| False-positive rate (demand-spike windows) | 6.7% |
+| False-positive rate (all non-attack windows) | 1.5% |
+| Attack-level detection | 12/12 test-split attacks caught |
+| Median detection latency | 0.0 min (alerts on the window the attack starts) |
 
-## Safety
+**Aggregate across 10 independently generated synthetic scenarios** (fresh data each
+time, same pipeline, seeds 42/101/202/303/404/505/606/707/808/909):
 
-Defense-only: this system detects and alerts only—it takes no offensive or evasive action and includes no code that could be repurposed for fraud.
+| Metric | Mean | Std dev | Range across seeds |
+|---|---|---|---|
+| Precision | 0.993 | 0.019 | 0.937 – 1.000 |
+| Recall | 0.953 | 0.082 | 0.758 – 1.000 |
+| F1 | 0.970 | 0.046 | 0.863 – 1.000 |
+| FP rate (all non-attack) | 0.2% | 0.5% | 0.0% – 1.5% |
 
+We report the spread deliberately: a single run's numbers are not presented as *the*
+result. Recall is the metric that moves the most (down to 0.76 on one seed) — that's
+the honest signal that the underlying synthetic attacks and demand spikes now overlap
+in behavior rather than being trivially separable.
+
+## Known limitations
+
+- **Synthetic data.** Real card-testing attack windows are proprietary to payment
+  processors and don't exist in any public dataset, so this cannot be validated
+  against real attack traffic. Transaction amount and decline-rate baselines are
+  loosely calibrated against public dataset statistics (e.g. the Kaggle Credit Card
+  Fraud dataset) rather than invented from nothing, but the labeled attack/demand
+  patterns themselves are simulated.
+- **Cold-start blind spot.** Stage 1 needs ~10 quiet windows (5 minutes) of baseline
+  before it can flag anything as a spike. An attack occurring in that warm-up period
+  will not be caught until the baseline exists. This is a structural property of the
+  design, not random noise, and accounts for some of the misses in the results above.
+- **Recall varies meaningfully across scenarios** (0.76-1.00) — this is not a
+  reliably "solved" detector; it is a working prototype whose failure modes are
+  measured and disclosed rather than hidden.
+- **Model score is uncalibrated.** The classifier's probability output is a relative
+  ranking signal for thresholding alerts, not a calibrated real-world likelihood of
+  fraud.
+- **Single alert threshold, not adaptive.** The 0.60 cutoff is fixed and was not
+  tuned against held-out data, but it also has not been validated across a wider
+  range of merchant traffic patterns than the three simulated here.
+- **Simplified Stage 1.** A production system would likely use a proper streaming
+  change-point method (EWMA/CUSUM) rather than a fixed rolling z-score threshold.
+
+## Defense-only statement
+
+This system is strictly detection and recommendation. It emits alerts with a
+suggested bounded action (e.g. "temporarily hold approvals for the flagged BIN
+range") for a human or a separate authorization system to act on. It does not
+autonomously block, cancel, or reverse any transaction, and it has no
+offense-capable functionality of any kind.
